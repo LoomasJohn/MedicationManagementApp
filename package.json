@@ -20,7 +20,8 @@
     "react": "18.3.1",
     "react-native": "0.76.7",
     "react-native-config": "^1.5.5",
-    "react-native-dotenv": "^3.4.11"
+    "react-native-dotenv": "^3.4.11",
+    "expo-speech": "~13.0.1"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
