@@ -14,6 +14,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { OPENAI_API_KEY } from "@env";
 import { setupDatabase } from './db/database';
 import MedicationList from './MedicationList';
+import * as Notifications from 'expo-notifications';
 
 // OpenAI Client Setup
 if (!OPENAI_API_KEY) {
@@ -23,6 +24,14 @@ if (!OPENAI_API_KEY) {
 const client = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
+
+// Request notification permissions
+const requestNotificationPermissions = async () => {
+  const { status } = await Notifications.requestPermissionsAsync();
+  if (status !== 'granted') {
+    alert('Permission to receive notifications was denied');
+  }
+};
 
 // Voice Theme Selector Component
 const VoiceThemeSelector = ({ selectedVoice, onVoiceSelected }) => {
@@ -64,11 +73,12 @@ const App = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioLoading, setAudioLoading] = useState(false);
 
-  // Initialize database
+  // Initialize database and request notification permissions
   useEffect(() => {
     const initialize = async () => {
       try {
         await setupDatabase();
+        await requestNotificationPermissions(); // Request notification permissions
       } catch (err) {
         console.error("❌ Failed to setup database:", err);
       }
@@ -117,8 +127,6 @@ const App = () => {
       )}
     </SafeAreaView>
   );
-  
-  
 };
 
 // Styles
