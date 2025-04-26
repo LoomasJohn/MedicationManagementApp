@@ -7,6 +7,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import OpenAI from 'openai';
 import { OPENAI_API_KEY } from "@env";
+import * as ImagePicker from 'expo-image-picker';
 
 const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 Notifications.setNotificationHandler({
@@ -356,6 +357,144 @@ const MedicationList = () => {
     }
   };
 
+  const handleMedicationScan = async () => {
+    try {
+      // Request camera permissions
+      const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
+      const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (cameraStatus !== 'granted' || mediaStatus !== 'granted') {
+        Alert.alert('Permissions required', 'We need camera and gallery access to scan medications');
+        return;
+      }
+  
+      // Let user choose between camera or gallery
+      const action = await new Promise<string>((resolve) => {
+        Alert.alert(
+          'Scan Medication',
+          'How would you like to provide the image?',
+          [
+            { text: 'Take Photo', onPress: () => resolve('camera') },
+            { text: 'Choose from Gallery', onPress: () => resolve('gallery') },
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve('cancel') },
+          ]
+        );
+      });
+  
+      if (action === 'cancel') return;
+  
+      // Launch appropriate picker
+      const result = await ImagePicker[
+        action === 'camera' ? 'launchCameraAsync' : 'launchImageLibraryAsync'
+      ]({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+        base64: true,
+      });
+  
+      if (result.canceled || !result.assets[0].base64) return;
+  
+      Alert.alert('Processing', 'Analyzing medication information...');
+  
+      // Process with OpenAI - request structured JSON output
+      const response = await openai.chat.completions.create({
+        model: "gpt-4-turbo",
+        messages: [{
+          role: "user",
+          content: [
+            { 
+              type: "text", 
+              text: `Perform these tasks with the medication image:
+              1. Extract visible details (name, dosage, schedule)
+              2. For the medication name you identify, include COMMON side effects even if not listed
+              3. Return in this exact JSON format:
+              {
+                "name": "(medication name)",
+                "dosage": "(e.g., 10mg tablet)",
+                "schedule": "(e.g., '8:00 AM' or 'Every 12 hours')",
+                "side_effects": "(list 3-5 most common side effects for this medication)",
+                "icon": "💊",
+                "color": "#81d4fa"
+              }
+              Important: Include side effects even if not visible in the image.` 
+            },
+            { 
+              type: "image_url", 
+              image_url: { 
+                url: `data:image/jpeg;base64,${result.assets[0].base64}` 
+              } 
+            }
+          ]
+        }],
+        response_format: { type: "json_object" },
+        max_tokens: 1000
+      });
+  
+      // Parse the JSON response
+      let medicationData;
+      try {
+        const responseText = response.choices[0].message.content;
+        medicationData = JSON.parse(responseText);
+        
+        // Handle missing name or side effects
+        if (!medicationData.name) {
+          medicationData.side_effects = "Common side effects unavailable - consult your pharmacist";
+        } else if (!medicationData.side_effects) {
+          medicationData.side_effects = "No side effects listed - consult your pharmacist";
+        }
+        
+        // Validate required fields
+        if (!medicationData.name || !medicationData.dosage || !medicationData.schedule) {
+          throw new Error('Missing required fields');
+        }
+      } catch (error) {
+        console.error('Error parsing AI response:', error);
+        Alert.alert('Error', 'Could not read medication details. Please try again or enter manually.');
+        return;
+      }
+  
+      // Confirm with user before saving
+      Alert.alert(
+        'Confirm Medication',
+        `Name: ${medicationData.name}\nDosage: ${medicationData.dosage}\nSchedule: ${medicationData.schedule}\nSide Effects: ${medicationData.side_effects}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Save', 
+            onPress: async () => {
+              try {
+                const db = getDBConnection();
+                await db.runAsync(
+                  `INSERT INTO medications (name, dosage, schedule, side_effects, icon, color)
+                   VALUES (?, ?, ?, ?, ?, ?)`,
+                  [
+                    medicationData.name,
+                    medicationData.dosage,
+                    medicationData.schedule,
+                    medicationData.side_effects || '',
+                    medicationData.icon || '💊',
+                    medicationData.color || '#81d4fa'
+                  ]
+                );
+                Alert.alert('Success', 'Medication saved successfully!');
+                loadMedicationsAndLogs(); // Refresh the list
+              } catch (error) {
+                console.error('Database error:', error);
+                Alert.alert('Error', 'Failed to save medication to database.');
+              }
+            } 
+          }
+        ]
+      );
+  
+    } catch (error) {
+      console.error('Medication scan error:', error);
+      Alert.alert('Error', 'Failed to process medication image');
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.scrollContainer}>
       <Text style={styles.header}>Your Medications</Text>
@@ -366,6 +505,10 @@ const MedicationList = () => {
 
       <TouchableOpacity style={styles.askButton} onPress={() => setQueryModalVisible(true)}>
         <Text style={styles.askButtonText}>💬 Ask a Medication Question</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.statusButton} onPress={handleMedicationScan}>
+        <Text style={styles.statusButtonText}>📋 Add Medication From Image</Text>
       </TouchableOpacity>
 
       <Modal visible={queryModalVisible} animationType="slide" transparent={true}>
